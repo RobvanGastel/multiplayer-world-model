@@ -39,7 +39,19 @@ def agent_observation(oracle: ArenaOracle, mallet_idx: int = 0, mirror: bool = F
     def relative_body(v, accel, other_max_speed, other_accel_scale):
         x, y, vx, vy = v
         ax, ay = accel
-        dx, dy = (x - own_x) / (w / 2), (y - own_y) / (h / 2)
+        # normalized by the FULL board dimension, not half -- own_x/own_y can
+        # be anywhere in [0, w]/[0, h], so the max possible separation is the
+        # full w/h, not w/2. Dividing by w/2 (as own_body's own nx/ny do,
+        # correctly, since THEIR max excursion from center really is w/2)
+        # let dx/dy reach +-2 instead of +-1, unlike every other feature in
+        # this observation (velocities are already bounded to [-1,1] via
+        # speed_sum's triangle-inequality bound; accelerations are clipped).
+        # A relative-position spike outside the range everything else lives
+        # in is exactly the kind of out-of-distribution input a network
+        # generalizes worst on -- suspected of causing exactly the erratic
+        # behavior seen when the puck sits deep behind the mallet, since
+        # that's when this separation is largest.
+        dx, dy = (x - own_x) / w, (y - own_y) / h
         speed_sum = other_max_speed + cfg.mallet_max_speed
         dvx, dvy = (vx - own_vx) / speed_sum, (vy - own_vy) / speed_sum
         accel_sum = other_accel_scale + mallet_accel_scale
@@ -128,7 +140,16 @@ class AirHockeyMatchEnv(gym.Env):
         state, _ = self.oracle.step(actions)
 
         outcome = self.oracle.outcome
-        reward = {"goal": 1.0, "conceded": -2.0}.get(outcome, 0.0)
+        # timeout is -1 too, not 0 -- a free draw made "stall until the shot
+        # clock runs out" a rational way to lock in a better-than-attacking
+        # outcome once a round dragged on, and trained agents learned
+        # exactly that (verified: mallet speed drops from ~218 to ~9 over a
+        # timeout round's last 20%, parking motionless a reachable ~70 units
+        # from the puck). Scoring is now the only non-losing outcome.
+        # oracle.outcome is None (not "timeout") on every non-terminal step,
+        # so it must stay out of this dict -- .get()'s default has to be 0.0,
+        # not -1.0, or every ongoing step gets penalized too.
+        reward = {"goal": 1.0, "conceded": -1.0, "timeout": -1.0}.get(outcome, 0.0)
         terminated = outcome in ("goal", "conceded")
         truncated = outcome == "timeout"
         return self._obs(), reward, terminated, truncated, {"outcome": outcome, "state": state}
@@ -147,7 +168,7 @@ class AirHockeyMatchEnv(gym.Env):
 
     def _dispatch_defend(self):
         """Reads opponent_policy fresh on every call (not just at reset) so a
-        self-play trainer can swap it mid-round -- see reset()'s comment."""
+        self-play trainer can swap it mid-round."""
         if self.opponent_policy is not None:
             return self._network_defend()
         return self._scripted_defend()

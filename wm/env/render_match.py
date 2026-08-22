@@ -193,6 +193,41 @@ def play_round(cfg, seed, rng, drop_speed=None, striker=None, defender=None):
     return frames, winner, speed, o.outcome
 
 
+_TEXT_COLOUR = (255, 213, 140)
+
+
+def panel_frame(arr: np.ndarray, cfg, header_text: str, header_color=_TEXT_COLOUR,
+                 overlay_text: str = "", overlay_font=None) -> Image.Image:
+    """One view with its own header bar above it (score, centered), and --
+    for the countdown/banner beats -- centered overlay text drawn straight
+    on the frame with no background box. The single-view building block
+    compose_frame's 2x2 grid assembles four of (via panel() below); a
+    standalone recorded clip (not the composed display grid) uses this
+    directly so both share the exact same score/banner styling."""
+    S = cfg.frame_size
+    fonts = _fonts_for(S)
+    header_h = max(fonts["ui"].size + 2, round(S * 11 / 64))
+    overlay_font = overlay_font or fonts["banner"]
+
+    im = Image.fromarray(arr, "RGB")
+    if overlay_text:
+        dd = ImageDraw.Draw(im, "RGBA")
+        l, t, r, b = dd.textbbox((0, 0), overlay_text, font=overlay_font, stroke_width=1)
+        tw, th = r - l, b - t
+        cx, cy = S / 2, S / 2
+        dd.text((cx - tw / 2 - l, cy - th / 2 - t), overlay_text, fill=(255, 236, 140, 255),
+                 font=overlay_font, stroke_width=1, stroke_fill=_OUTLINE_COLOR)
+
+    out = Image.new("RGB", (S, header_h + S), (10, 11, 15))
+    d = ImageDraw.Draw(out)
+    d.rectangle([0, 0, S, header_h], fill=(22, 25, 34))
+    tw = d.textlength(header_text, font=fonts["ui"])
+    d.text((S / 2 - tw / 2, 1), header_text, fill=header_color, font=fonts["ui"],
+           stroke_width=1, stroke_fill=_OUTLINE_COLOR)
+    out.paste(im, (0, header_h))
+    return out
+
+
 def compose_frame(views, cfg, px, score, countdown="", banner="", speed_label=""):
     """views = (flat0, flat1, iso0, iso1)
     Each of the 4 views (flat/iso x P0/P1) gets its own scoreboard directly
@@ -223,16 +258,10 @@ def compose_frame(views, cfg, px, score, countdown="", banner="", speed_label=""
     p1_text = f"{p1_score}-{p0_score}"
     overlay_text = countdown or banner
     overlay_font = fonts["countdown"] if countdown else fonts["banner"]
-    overlay_stroke = 1
 
     def panel(arr, col, row, is_flat, agent_idx, header_text, header_color):
         x = col * (S + gap)
         y = speed_h + row * (S + header_h + gap)
-
-        d.rectangle([x, y, x + S, y + header_h], fill=(22, 25, 34))
-        tw = d.textlength(header_text, font=fonts["ui"])
-        d.text((x + S / 2 - tw / 2, y + 1), header_text, fill=header_color, font=fonts["ui"],
-               stroke_width=1, stroke_fill=_OUTLINE_COLOR)
 
         im = Image.fromarray(arr, "RGB")
         dd = ImageDraw.Draw(im, "RGBA")
@@ -240,17 +269,12 @@ def compose_frame(views, cfg, px, score, countdown="", banner="", speed_label=""
             draw_ramp_flat(dd, cfg, S, puck_y)
         else:
             draw_ramp_iso(dd, cfg, agent_idx, S, puck_y)
-        if overlay_text:
-            l, t, r, b = dd.textbbox((0, 0), overlay_text, font=overlay_font,
-                                      stroke_width=overlay_stroke)
-            tw2, th2 = r - l, b - t
-            cx, cy = S / 2, S / 2
-            dd.text((cx - tw2 / 2 - l, cy - th2 / 2 - t), overlay_text,
-                     fill=(255, 236, 140, 255), font=overlay_font,
-                     stroke_width=overlay_stroke, stroke_fill=_OUTLINE_COLOR)
-        lo.paste(im, (x, y + header_h))
+        arr_with_ramp = np.array(im, dtype=np.uint8)
 
-    _TEXT_COLOUR = (255, 213, 140)
+        panel_im = panel_frame(arr_with_ramp, cfg, header_text, header_color,
+                                overlay_text, overlay_font)
+        lo.paste(panel_im, (x, y))
+
     panel(flat0, 0, 0, True, 0, p0_text, _TEXT_COLOUR)
     panel(flat1, 1, 0, True, 1, p1_text, _TEXT_COLOUR)
     panel(iso0, 0, 1, False, 0, p0_text, _TEXT_COLOUR)

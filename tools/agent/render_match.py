@@ -40,7 +40,7 @@ def render_match(args):
 
 
 if __name__ == "__main__":
-        ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None,
                      help="omit for a fresh random match every run (the seed used is printed "
                           "so you can pass it back to reproduce that exact match)")

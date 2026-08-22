@@ -73,7 +73,7 @@ def train_ppo_agent(args: argparse.Namespace):
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--config", type=str, default="configs/ppo.yml",
+    p.add_argument("--config", type=str, default="configs/ppo/ppo.yml",
                     help="yaml file of defaults")
     p.add_argument("--env-id", type=str, default="CartPole-v1", help="the id of the environment")
     p.add_argument("--save-path", type=str, default="runs/ppo.pt",
