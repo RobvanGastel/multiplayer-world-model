@@ -17,15 +17,15 @@ import torch.utils.checkpoint
 from einops import rearrange
 from torch import Tensor, nn
 
-from wm.codec.layers.attention import SelfAttention, SelfAttentionConfig
-from wm.codec.layers.weights import init_weights
+from wm.training.attention import SelfAttention, SelfAttentionConfig
+from wm.training.weights import init_weights
 
 
 def _rope_cos_sin(positions: Tensor, dim: int, theta: float) -> tuple[Tensor, Tensor]:
     """1D RoPE cos/sin for a set of positions.
 
     Returns ``(cos, sin)`` each of shape ``(len(positions), dim)``, with consecutive pairs
-    repeated to match :func:`wm.codec.layers.attention.apply_rotary_emb`.
+    repeated to match :func:`wm.training.attention.apply_rotary_emb`.
     """
     assert dim % 2 == 0, f"RoPE dim must be even, got {dim}"
     k = torch.arange(dim // 2, dtype=torch.float32, device=positions.device)

@@ -8,7 +8,7 @@ from einops import rearrange
 from torch import Tensor, nn
 
 from wm.codec.dino import DINO_DIM, DinoModel
-from wm.codec.layers.weights import init_weights
+from wm.training.weights import init_weights
 
 
 @dataclass

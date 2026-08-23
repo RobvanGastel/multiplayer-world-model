@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .attention import AdaptiveLayerNorm
+from wm.training.attention import AdaptiveLayerNorm
 
 
 def init_weights(module: nn.Module) -> None:
