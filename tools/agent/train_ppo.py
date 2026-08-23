@@ -18,8 +18,6 @@ def log_episode(global_step: int, info: dict):
 
 
 def make_eval_callback(eval_dir: str, frame_size: int = 96):
-    os.makedirs(eval_dir, exist_ok=True)
-
     def on_eval(iteration: int, checkpoint_path: str):
         from wm.env.arena import ArenaConfig
         from wm.env.render_match import ROUND_SECONDS, load_policy, policy_trained, play_match
@@ -32,11 +30,15 @@ def make_eval_callback(eval_dir: str, frame_size: int = 96):
         defender = functools.partial(policy_trained, ppo=ppo_eval, deterministic=True, mirror=True)
         seed = random.SystemRandom().randint(0, 2**31 - 1)
 
-        frames, final_score = play_match(cfg, seed, px=frame_size, fps=20, hold_secs=0.5,
+        # fps must match the sim's own rate (1/dt)
+        fps = 1.0 / cfg.dt
+        frames, final_score = play_match(cfg, seed, px=frame_size, fps=fps, hold_secs=0.5,
                                           striker=striker, defender=defender,
                                           win_games=1, best_of=1)
+
+        os.makedirs(eval_dir, exist_ok=True)
         out_path = os.path.join(eval_dir, f"iter{iteration:06d}_seed{seed}.gif")
-        save_gif(frames, out_path, fps=20)
+        save_gif(frames, out_path, fps=fps)
         print(f"eval: iteration={iteration}  wrote {out_path}  final_score={final_score}")
 
     return on_eval

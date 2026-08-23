@@ -195,6 +195,21 @@ def play_round(cfg, seed, rng, drop_speed=None, striker=None, defender=None):
 
 _TEXT_COLOUR = (255, 213, 140)
 
+# (text, hold_seconds) for the pre-round "3, 2, 1, GO!" overlay
+COUNTDOWN_SEQUENCE = [("3", 0.6), ("2", 0.6), ("1", 0.6), ("GO!", 0.5)]
+
+
+def _draw_overlay_text(im: Image.Image, text: str, font) -> None:
+    """Center `text` on `im` in place, with the standard glow/outline
+    styling shared by every on-frame overlay (score header excluded --
+    that's panel_frame's own header bar, not this)."""
+    dd = ImageDraw.Draw(im, "RGBA")
+    l, t, r, b = dd.textbbox((0, 0), text, font=font, stroke_width=1)
+    tw, th = r - l, b - t
+    cx, cy = im.width / 2, im.height / 2
+    dd.text((cx - tw / 2 - l, cy - th / 2 - t), text, fill=(255, 236, 140, 255),
+             font=font, stroke_width=1, stroke_fill=_OUTLINE_COLOR)
+
 
 def panel_frame(arr: np.ndarray, cfg, header_text: str, header_color=_TEXT_COLOUR,
                  overlay_text: str = "", overlay_font=None) -> Image.Image:
@@ -211,12 +226,7 @@ def panel_frame(arr: np.ndarray, cfg, header_text: str, header_color=_TEXT_COLOU
 
     im = Image.fromarray(arr, "RGB")
     if overlay_text:
-        dd = ImageDraw.Draw(im, "RGBA")
-        l, t, r, b = dd.textbbox((0, 0), overlay_text, font=overlay_font, stroke_width=1)
-        tw, th = r - l, b - t
-        cx, cy = S / 2, S / 2
-        dd.text((cx - tw / 2 - l, cy - th / 2 - t), overlay_text, fill=(255, 236, 140, 255),
-                 font=overlay_font, stroke_width=1, stroke_fill=_OUTLINE_COLOR)
+        _draw_overlay_text(im, overlay_text, overlay_font)
 
     out = Image.new("RGB", (S, header_h + S), (10, 11, 15))
     d = ImageDraw.Draw(out)
@@ -287,11 +297,22 @@ def compose_frame(views, cfg, px, score, countdown="", banner="", speed_label=""
 
 def countdown_frames(views, cfg, px, score, fps):
     """3, 2, 1, GO! held over the static pre-drop scene."""
-    seq = [("3", 0.6), ("2", 0.6), ("1", 0.6), ("GO!", 0.5)]
     out = []
-    for text, secs in seq:
+    for text, secs in COUNTDOWN_SEQUENCE:
         im = compose_frame(views, cfg, px, score, countdown=text)
         out += [im] * max(1, int(fps * secs))
+    return out
+
+
+def countdown_frames_raw(board: np.ndarray, cfg, fps: float) -> list:
+    """Single-view analog of countdown_frames: "3, 2, 1, GO!" held over one
+    already-rendered, pre-header view (e.g. a per-player iso frame)."""
+    fonts = _fonts_for(cfg.frame_size)
+    out = []
+    for text, secs in COUNTDOWN_SEQUENCE:
+        im = Image.fromarray(board, "RGB")
+        _draw_overlay_text(im, text, fonts["countdown"])
+        out += [np.array(im, dtype=np.uint8)] * max(1, round(fps * secs))
     return out
 
 
@@ -307,7 +328,12 @@ def play_match(cfg, seed, px, fps, hold_secs, striker=None, defender=None,
             cfg, seed=seed + game_no, rng=rng, striker=striker, defender=defender)
 
         pre_score = (p0_score, p1_score)
-        all_frames += countdown_frames(frames[0], cfg, px, pre_score, fps)
+        if game_no == 1:
+            # only the series opener gets the "3, 2, 1, GO!" beat -- every
+            # later game still gets the ramp-drop preroll (play_round always
+            # includes it), just without the countdown holding things up,
+            # so a multi-game match spends more of its runtime on actual play.
+            all_frames += countdown_frames(frames[0], cfg, px, pre_score, fps)
         for v in frames:
             all_frames.append(compose_frame(v, cfg, px, pre_score))
 
