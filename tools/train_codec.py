@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import time
 from contextlib import nullcontext
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
+from PIL import Image
 
+from tools.visualize_codec import denormalize, side_by_side
 from wm.codec.model import VideoCodec
 from wm.codec.loss import CodecLoss
 from wm.data.dataset import create_dataloader
@@ -24,6 +27,29 @@ def cycle_loader(loader):
     step 800 the first time this ran."""
     while True:
         yield from loader
+
+
+def visualize_step(model: VideoCodec, vis_loader, device: torch.device, out_dir: str,
+                    iter_num: int, upscale: int) -> None:
+    """Reconstruct a random sample and save input-vs-reconstruction GIFs, via
+    tools/visualize_codec.py's own denormalize/side_by_side -- same output
+    shape as running that script by hand, just on the live in-training model
+    instead of a saved checkpoint. Restores model.train() before returning."""
+    model.eval()
+    batch = next(iter(vis_loader)).to(device)
+    with torch.no_grad():
+        out = model(batch)
+    model.train()
+
+    step_dir = Path(out_dir) / f"step{iter_num + 1:06d}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    for i in range(batch.video.shape[0]):
+        frames = side_by_side(denormalize(out.input_video[i]), denormalize(out.output_video[i]))
+        upscaled = [f.resize((f.width * upscale, f.height * upscale), Image.NEAREST) for f in frames]
+        upscaled[0].save(step_dir / f"clip{i}.gif", save_all=True,
+                          append_images=upscaled[1:], duration=100, loop=0)
+    print(f"step {iter_num + 1}: wrote {batch.video.shape[0]} visualization clip(s) to {step_dir}",
+          flush=True)
 
 
 def _autocast(device: torch.device):
@@ -58,6 +84,13 @@ def train_codec(args) -> None:
         num_workers=args.num_workers,
     )
     iter_train_loader = cycle_loader(train_loader)
+
+    # Separate from train_loader (own shuffled dataset instance) so pulling a
+    # visualization batch doesn't consume/skew the training data stream.
+    vis_loader = None
+    if args.vis_every:
+        vis_loader = create_dataloader(args.data_root, clip_len=args.clip_len,
+                                        batch_size=args.vis_num_clips, num_workers=0)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay,
                                    betas=(args.adam_beta1, args.adam_beta2))
@@ -105,6 +138,9 @@ def train_codec(args) -> None:
             model.save_checkpoint(args.save_path, extra_data={
                 "latent_mean_std": (ema_latent_mean.compute(), ema_latent_std.compute()),
             })
+
+        if args.vis_every and (iter_num + 1) % args.vis_every == 0:
+            visualize_step(model, vis_loader, device, args.vis_dir, iter_num, args.vis_upscale)
 
     model.save_checkpoint(args.save_path, extra_data={
         "latent_mean_std": (ema_latent_mean.compute(), ema_latent_std.compute()),
