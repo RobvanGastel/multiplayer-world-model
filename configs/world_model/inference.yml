@@ -1,0 +1,8 @@
+# WorldModelInferenceConfig config
+
+n_diffusion_steps: 10
+# Noise level for the kv-cache update pass; null merges that pass into the last diffusion step
+# (one fewer forward per frame, see denoise_streaming).
+noise_level: 0.2
+# Sampling-schedule shape: "linear_quadratic" (default) or "linear" (uniform).
+schedule_type: linear_quadratic

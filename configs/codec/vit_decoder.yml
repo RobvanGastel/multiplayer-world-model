@@ -1,0 +1,30 @@
+# wm/codec/vit_decoder.py's ViTVideoDecoder config
+video: null
+
+out_channels: 3
+latent_dim: 32
+# Must satisfy bottleneck.stride * patch_size == 16 * encoder.bottleneck.stride
+patch_size: 16
+# Must equal encoder.bottleneck.temporal_stride, 2x temporal downsampling
+patch_size_t: 2
+is_causal: true
+activation_checkpointing: true
+eps: 1.0e-6
+
+bottleneck:
+  stride: 2
+  temporal_stride: 1
+  noise_tau: 0.0
+
+vit_width: 384
+vit_depth: 6
+vit_num_heads: 12
+vit_num_kv_heads: null
+mlp_dim_multiplier: 4
+layerscale_init: 1.0e-4
+rope_theta_spatial: 100.0
+rope_theta_temporal: 64.0
+# Literal["rmsnorm", "layernorm"] in the original model; not enforced here,
+# wm.codec.layers.attention.SelfAttentionConfig is whatever actually
+# validates it now.
+qk_norm: layernorm

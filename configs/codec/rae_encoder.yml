@@ -1,0 +1,24 @@
+# wm/codec/rae_encoder.py's RAEEncoder config
+latent_dim: 32
+rae_model: dinov3_vits16
+
+# height must be a multiple of 32 (16 from DINO's own patch16 grid x 2 from
+# the bottleneck's stride-2 conv, see get_downsampling_factors).
+video:
+  height: 160
+  width: 128
+  timesteps: 16
+
+# Based on DINOv3 ViT-B
+aggregation_layers: [2, 5, 8, 11]
+
+# Strided ConvBottleneck
+bottleneck:
+  stride: 2
+  temporal_stride: 2
+  noise_tau: 0.0
+
+
+compile_dino: false
+# Directory holding pretrained DINOv3 .pth weight files 
+dino_weights_dir: output

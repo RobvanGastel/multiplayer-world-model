@@ -1,0 +1,13 @@
+# wm/codec/loss.py's CodecLossWeights config
+
+loss_mae: 1.0
+loss_lpips_perceptual: 1.0
+lpips_perceptual_frame_frac: 0.25
+
+# RAEEncoder only: consistency between DINO features of the reconstruction and the encoder's.
+loss_dino_latent_consistency: 1.0
+dino_latent_consistency_frame_frac: 0.25
+
+compile_dino: false
+auto_weight: true
+max_auto_weight: 10000.0

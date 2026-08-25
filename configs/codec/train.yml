@@ -1,0 +1,39 @@
+# tools/train_codec.py's training-loop defaults
+seed: 0
+cuda: true
+compile: false
+
+data_root: data/train
+clip_len: 16
+batch_size: 48
+num_workers: 6
+
+# linearly scaled with batch_size (Goyal et al.) from the original 1e-4
+# tuned for batch_size: 4 -- 12x batch -> 12x lr.
+lr: 1.2e-3
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+
+steps: 100000
+warmup_steps: 1000
+constant_steps: 0
+# null = steps - warmup_steps - constant_steps (decay for the rest of
+# training)
+decay_steps: null
+min_lr: 1.0e-6
+
+latents_ema_decay: 0.99
+
+log_every: 50
+save_every: 1000
+save_path: output/codec.pt
+
+# path to a codec checkpoint to resume model weights + latent mean/std
+resume: null
+
+# 0 disables visualization evaluation
+vis_every: 50
+vis_num_clips: 4
+vis_upscale: 3
+vis_dir: output/codec

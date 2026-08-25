@@ -1,0 +1,37 @@
+# PPO data generation scripts for data collection, in self-play mode
+seed: 1
+torch_deterministic: true
+cuda: false
+
+total_timesteps: 131072000
+learning_rate: 1.5e-4
+num_envs: 8
+num_steps: 512
+anneal_lr: true
+gamma: 0.99
+gae_lambda: 0.95
+num_minibatches: 64
+update_epochs: 4
+norm_adv: true
+clip_coef: 0.2
+clip_vloss: true
+ent_coef: 0.001
+vf_coef: 0.5
+mean_reg_coef: 0.0
+logstd_reg_coef: 0.001
+max_grad_norm: 0.5
+target_kl: null
+hidden_dim: 128
+
+action_mean_clamp: 2.0
+action_logstd_range: [-2.0, 0.5]
+
+checkpoint_every: 10
+self_play: true
+opponent_pool_size: 16
+snapshot_every: 20
+min_snapshot_lag: 100
+scripted_opponent_prob: 0.0
+eval_every: 500
+eval_dir: ""
+eval_frame_size: 96

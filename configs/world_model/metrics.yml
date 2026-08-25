@@ -1,0 +1,9 @@
+# tools/train_wm.py's eval-metrics rollout config
+
+# Overrides model.config.n_context_frames for the metrics rollout only, via
+# LatentWorldModel.set_inference_context; null = use the model's trained n_context_frames.
+n_context_frames: null
+# Latent-frame stride between unrolled eval frames; null = model.temporal_downsampling.
+eval_temporal_downsampling: null
+num_unrolled_frames: 8
+per_device_batch_size: 4

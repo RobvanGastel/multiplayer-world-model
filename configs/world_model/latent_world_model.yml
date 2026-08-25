@@ -1,0 +1,53 @@
+# Latent World Model config ported from the original pydantic setup
+actions:
+  valid_keys: [w, a, s, d]
+  source_fps: 60
+  target_fps: 30
+
+video:
+  height: 160
+  width: 128
+  channels: 3
+  timesteps: 40
+  fps: 60
+
+codec_checkpoint: runs/codec.pt
+# Optional override of the codec latent mean/std; normally read from the codec checkpoint.
+latent_mean_std: null
+
+causal: true
+activation_checkpointing: true
+
+# PSD-M self-distillation: progressive self-distillation with midpoint targets; see "How to build a
+# consistency model" (https://arxiv.org/abs/2505.18825) and the equivalent scheme in "One Step
+# Diffusion via Shortcut Models" (https://arxiv.org/abs/2410.12557).
+psd_loss_prob: 0.1
+psd_weight: 0.0
+
+# Condition each denoising step on the clean latents of the previous frames (avoids the
+# train/inference mismatch in diffusion forcing).
+use_clean_past: true
+
+dropout_action_prob: 0.1
+dropout_action_per_player: false
+action_subset_drop_prob: 0.5
+learned_temporal_pool: true
+use_codec_posterior_mean: true
+
+n_register_tokens: 0
+
+patch_size: 1
+attention_gating: true
+# If true, apply AdaLN conditioning to the attention sublayers (space/time) as well as the MLP, as
+# in standard DiT. The default applies MLP-only conditioning and keeps the extra parameters out of
+# the state dict for strict loading.
+ada_attn_ln: true
+
+n_context_frames: 39  # only used during inference
+
+# Original model was 1B: hidden_dim=2048, n_head=16, n_layers=16, ~1.64B params
+hidden_dim: 384
+n_head: 12
+n_kv_head: null
+n_layers: 7
+time_attention_every: 1

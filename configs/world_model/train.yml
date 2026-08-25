@@ -1,0 +1,35 @@
+# tools/train_wm.py's training-loop defaults
+seed: 0
+cuda: true
+
+steps: 100000
+batch_size: 16
+
+# Separate collected-data directories (each with its own manifest_*.jsonl shards + matches/, see
+# tools/data/collect_matches.py --out-dir), not a split within one directory. test_root needs a
+# held-out collection run of its own -- collect_matches.py --out-dir <test_root>.
+train_root: data/train
+test_root: data/test
+
+num_workers: 6
+
+validation_batch_size: 16
+val_every: 500
+validation_n_batches: 10
+
+# linearly scaled with batch_size (Goyal et al.), same convention as configs/codec/train.yml.
+lr: 4.0e-4
+weight_decay: 0.1
+adam_beta1: 0.9
+adam_beta2: 0.95
+
+warmup_steps: 1000
+constant_steps: 0
+# null = steps - warmup_steps - constant_steps (decay for the rest of training) -- computed after
+# merge_config, see train_wm.py's __main__ (same as train_codec.py's).
+decay_steps: null
+min_lr: 1.0e-6
+
+log_every: 1
+save_every: 1000
+save_path: output/world_model.pt
