@@ -66,6 +66,13 @@ def train_codec(args) -> None:
     model: VideoCodec = VideoCodec(SimpleNamespace(encoder=args.encoder, decoder=args.decoder))
     model.train().to(device)
 
+    resumed_latent_mean_std = None
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        model.load_state_dict(checkpoint["state_dict"])
+        resumed_latent_mean_std = checkpoint.get("latent_mean_std")
+        print(f"resumed weights from {args.resume}", flush=True)
+
     loss = CodecLoss(args.loss)
     loss.to(device)
 
@@ -102,9 +109,11 @@ def train_codec(args) -> None:
     # First batch warm-up
     next(iter_train_loader)
 
-    # Running mean/std of the encoder's latent output z
-    ema_latent_mean = DistributedEMA(decay=args.latents_ema_decay, device=device)
-    ema_latent_std = DistributedEMA(decay=args.latents_ema_decay, initial_value=1.0, device=device)
+    # Running mean/std of the encoder's latent output z, resumed from the checkpoint's saved
+    # values if available, so a resumed run doesn't re-warm this from scratch.
+    resumed_mean, resumed_std = resumed_latent_mean_std or (0.0, 1.0)
+    ema_latent_mean = DistributedEMA(decay=args.latents_ema_decay, initial_value=resumed_mean, device=device)
+    ema_latent_std = DistributedEMA(decay=args.latents_ema_decay, initial_value=resumed_std, device=device)
 
     losses: dict[str, torch.Tensor] = {}
     for iter_num in range(args.steps):
@@ -151,17 +160,15 @@ def train_codec(args) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default="configs/codec/train.yml",
-                     help="yaml of training-loop defaults (data_root, batch_size, lr, steps, "
-                          "...) -- see configs/codec/train.yml. To change one value for a run, "
-                          "copy this file and point --config at the copy (matching how "
-                          "configs/ppo/*.yml variants are done), same as wm.utils.merge_config's "
-                          "other user, tools/agent/train_ppo.py")
+                     help="yaml of training-loop defaults")
     ap.add_argument("--encoder-config", type=str, default="configs/codec/rae_encoder.yml",
                      help="RAEEncoder config -- see wm.codec.rae_encoder.RAEEncoder")
     ap.add_argument("--loss-config", type=str, default="configs/codec/codec_loss.yml",
                      help="CodecLoss weights -- see wm.codec.loss.CodecLoss")
     ap.add_argument("--decoder-config", type=str, default="configs/codec/vit_decoder.yml",
                      help="ViTVideoDecoder config -- see wm.codec.vit_decoder.ViTVideoDecoder")
+    ap.add_argument("--resume", type=str, default=None,
+                     help="path to a codec checkpoint (e.g. runs/codec.pt) to resume model weights")
     raw_args = ap.parse_args()
     args = merge_config(raw_args.config, raw_args)
 

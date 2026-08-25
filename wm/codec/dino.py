@@ -20,6 +20,7 @@ PATCH_SIZE = 16
 DINO_DIM = {
     "dinov3_vitl16": 1024,
     "dinov3_vitb16": 768,
+    "dinov3_vits16": 384,
 }
 
 # Pretrained DINOv3 weight filenames, as published at
@@ -27,6 +28,7 @@ DINO_DIM = {
 DINO_WEIGHT_FILENAMES = {
     "dinov3_vitl16": "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth",
     "dinov3_vitb16": "dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth",
+    "dinov3_vits16": "dinov3_vits16_pretrain_lvd1689m-08c60483.pth",
 }
 
 
@@ -49,6 +51,9 @@ def resolve_dino_weights(dino_model: str, weights_dir: str | Path | None = None)
 DEFAULT_DINO_LAYERS = {
     "dinov3_vitl16": (2, 6, 10, 14, 18, 22),
     "dinov3_vitb16": (2, 5, 8, 11),
+    # Same depth (12 blocks) as vitb16, just narrower (384 vs 768) -- same
+    # relative layer spacing transfers directly.
+    "dinov3_vits16": (2, 5, 8, 11),
 }
 
 

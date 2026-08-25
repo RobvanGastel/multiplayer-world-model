@@ -8,8 +8,8 @@ import torch
 import yaml
 
 from wm.data.dataset import create_loader
-from wm.training.lr_schedule import WarmupConstantCosineDecayLR
 from wm.utils import load_config, merge_config
+from wm.training.lr_schedule import WarmupConstantCosineDecayLR
 from wm.world_model.latent_world_model import LatentWorldModel
 
 

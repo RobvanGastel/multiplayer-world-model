@@ -239,6 +239,118 @@ class LatentWorldModel(nn.Module):
         t = rearrange(torch.max(a, b), "b t -> b t 1 1 1")
         return s, t
 
+    def denoise_streaming(
+        self,
+        z_t: Tensor,
+        a: Tensor,
+        streaming_kv_caches=None,
+        n_diffusion_steps=10,
+        noise_level: float | None = 0.2,
+        schedule_type: str = "linear_quadratic",
+    ):
+        """Denoise the last latent frame, streaming the context through a kv-cache.
+
+        Args:
+            z_t: ``(b t h w c)`` with the last latent being complete gaussian noise.
+            a: ``(b t c)`` action conditioning.
+            streaming_kv_caches: List of per-layer kv caches, or None to initialise from context.
+            n_diffusion_steps: Number of integration steps.
+            noise_level: Noise level at which the finished frame is stored in the kv cache (an extra
+                forward pass re-noises it to ``tau = 1 - noise_level``). None skips that extra pass
+                and caches the frame as seen by the final diffusion step instead.
+            schedule_type: Sampling-schedule shape passed to ``build_inference_schedule``.
+
+        Returns:
+            ``(z_t, streaming_kv_caches)``.
+        """
+        batch_size, n_latents = z_t.shape[:2]
+        n_context_latents = n_latents - 1
+        device = z_t.device
+        timesteps = build_inference_schedule(n_diffusion_steps, device, schedule_type)
+        delta_ts = timesteps[1:] - timesteps[:-1]
+
+        # Initialise streaming_kv_caches
+        if (n_context_latents > 0) and streaming_kv_caches is None:
+            context_clean_past = None
+            if self.config.use_clean_past:
+                assert self.bos is not None
+                context_clean_past = torch.cat([self.bos.repeat(batch_size, 1, 1, 1, 1), z_t[:, :-2]], dim=1)
+            context_tau = torch.ones((batch_size, n_context_latents, 1, 1, 1), device=device, dtype=z_t.dtype)
+            z_t_prefix = z_t[:, :-1]
+
+            _, streaming_kv_caches = self.world_model(
+                z_t_prefix,
+                a[:, :-1],
+                context_tau,
+                return_kv=True,
+                clean_past=context_clean_past,
+            )
+
+        # The past frame is always a clean (un-noised) latent.
+        clean_past = z_t[:, -2:-1] if self.config.use_clean_past else None
+
+        last_kv_cache = None
+        for step_idx, (timestep, delta_t) in enumerate(zip(timesteps[:-1], delta_ts)):
+            tau = timestep * torch.ones((batch_size, 1, 1, 1, 1), device=device, dtype=z_t.dtype)
+            # PSD-trained models take the integration-step size as input; None means no delta.
+            # psd_enabled was a computed property on the old pydantic config; inlined here since a
+            # plain namespace only has the two underlying fields (see DiffusionTransformer.__init__).
+            psd_enabled = self.config.psd_loss_prob > 0 or self.config.psd_weight > 0
+            tau_delta = delta_t * torch.ones_like(tau) if psd_enabled else None
+            # With noise_level=None, reuse the final step's forward to also produce
+            # the kv cache instead of running a dedicated call after the loop.
+            return_kv = noise_level is None and step_idx == len(delta_ts) - 1
+
+            pred_v = self.world_model(
+                z_t[:, -1:],
+                a[:, -1:],
+                tau,
+                tau_delta=tau_delta,
+                kv_caches=streaming_kv_caches,
+                return_kv=return_kv,
+                clean_past=clean_past,
+            )
+            if return_kv:
+                pred_v, last_kv_cache = pred_v
+
+            z_t[:, -1:] += delta_t * pred_v
+
+        if noise_level is not None:
+            # update streaming kv cache
+            # add noise on last frame
+            current_tau = (1 - noise_level) * torch.ones(
+                (batch_size, 1, 1, 1, 1), device=device, dtype=z_t.dtype
+            )
+            current_z_t = current_tau * z_t[:, -1:] + (1 - current_tau) * torch.randn_like(z_t[:, -1:])
+            current_z_t = current_z_t.to(dtype=z_t.dtype)
+            _, last_kv_cache = self.world_model(
+                current_z_t,
+                a[:, -1:],
+                current_tau,
+                kv_caches=streaming_kv_caches,
+                return_kv=True,
+                clean_past=clean_past,
+            )
+
+        assert streaming_kv_caches is not None and last_kv_cache is not None
+        n_register_tokens = self.config.n_register_tokens
+        for i in range(len(streaming_kv_caches)):
+            if streaming_kv_caches[i] is not None:
+                k_ctx, v_ctx = streaming_kv_caches[i]
+                new_k, new_v = last_kv_cache[i]
+                streaming_kv_caches[i] = (
+                    torch.cat(
+                        [k_ctx[:, :n_register_tokens], k_ctx[:, n_register_tokens + 1 :], new_k],
+                        dim=1,
+                    ).clone(),
+                    torch.cat(
+                        [v_ctx[:, :n_register_tokens], v_ctx[:, n_register_tokens + 1 :], new_v],
+                        dim=1,
+                    ).clone(),
+                )
+
+        return z_t, streaming_kv_caches
+
     def set_inference_context(self, n_context_frames: int) -> None:
         """Override how many frames the autoregressive rollout conditions on (inference-only).
 
