@@ -200,7 +200,6 @@ class VideoCodec(nn.Module):
 
         return model
 
-# TODO: We should not load like this(?)
 def _find_codec_config(checkpoint_path: str | Path) -> Path | None:
     for parent in Path(checkpoint_path).parents:
         candidate = parent / VideoCodec.CONFIG_FILENAME

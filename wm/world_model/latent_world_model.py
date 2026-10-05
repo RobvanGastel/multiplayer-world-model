@@ -97,10 +97,6 @@ class LatentWorldModel(nn.Module):
             dim=config.hidden_dim,
             temporal_downsampling=self.action_temporal_downsampling,
             dropout_prob=config.dropout_action_prob,
-            learned_temporal_pool=config.learned_temporal_pool,
-            dropout_action_per_player=config.dropout_action_per_player,
-            key_field_names=config.actions.valid_keys,
-            subset_drop_prob=config.action_subset_drop_prob,
         )
         # Learned "beginning of sequence" latent used as the past of the first frame.
         # Only created with past-conditioning so older checkpoints still load.
@@ -112,10 +108,7 @@ class LatentWorldModel(nn.Module):
             )
 
     def forward(self, batch: VideoActionBatch, *args, **kwargs) -> dict[str, Tensor]:
-        self.codec.preprocess_batch(batch)
-
-        with torch.no_grad():
-            z = self.encode_video(batch.slice_time(0, self.config.video.timesteps, fps=self.config.video.fps))
+        z = self.latents_from_batch(batch, self.config.video.timesteps)
 
         off = self.action_temporal_downsampling - 1
         a = self.action_encoder(batch.actions.slice_time(off, self.n_action_steps + off))
@@ -143,15 +136,8 @@ class LatentWorldModel(nn.Module):
             "loss_diffusion": loss_diffusion,
         }
 
-        if self.config.psd_weight > 0:
-            # Deterministic PSD: compute the loss every step and add `psd_weight * loss_psd` to the
-            # total. Exact gradient (no stochastic skipping), at the cost of always running the
-            # three extra forward passes.
-            loss_psd = self._compute_psdm_loss(z, a, shifted_z)
-            outputs["loss_total"] = loss_diffusion + self.config.psd_weight * loss_psd
-            outputs["loss_psd"] = loss_psd.detach()
-        elif self.config.psd_loss_prob > 0:
-            # Stochastic PSD: compute the (unweighted) loss on a fraction `psd_loss_prob` of steps,
+        if self.config.psd_loss_prob > 0:
+            # PSD-M self-distillation: compute the (unweighted) loss on a fraction `psd_loss_prob` of steps,
             # skipping its three extra forward passes otherwise. The logged value is
             # importance-weighted by 1 / psd_loss_prob (and 0 on skipped steps) so its expectation
             # over steps equals the true PSD loss.
@@ -197,10 +183,18 @@ class LatentWorldModel(nn.Module):
 
         return torch.nn.functional.mse_loss(pred_v_st.float(), v_target_st.float())
 
+    def latents_from_batch(self, batch: VideoActionBatch, n_frames: int) -> Tensor:
+        """Normalized latents (b, t, h, w, c) for the batch's first ``n_frames`` video frames: read from
+        ``batch.latents`` when it was pre-encoded (tools/data/encode_latents.py), else encoded here."""
+        if batch.latents is not None:
+            z = self.normalize_tokens(batch.latents[:, : n_frames // self.temporal_downsampling].float())
+            return rearrange(z, "b t c h w -> b t h w c")
+        self.codec.preprocess_batch(batch)
+        with torch.no_grad():
+            return self.encode_video(batch.slice_time(0, n_frames, fps=self.config.video.fps))
+
     def encode_video(self, batch: VideoActionBatch) -> Tensor:
         _, encoder_output = self.codec.encode(batch.video, trim_video=False)
-        # The release codec is the deterministic RAE whose posterior mean equals its sample
-        # (z_mean == z), so use_codec_posterior_mean reduces to reading z either way.
         z = encoder_output.z
         z = self.normalize_tokens(z)
         z = rearrange(z, "b t c h w -> b t h w c")
@@ -293,9 +287,7 @@ class LatentWorldModel(nn.Module):
         for step_idx, (timestep, delta_t) in enumerate(zip(timesteps[:-1], delta_ts)):
             tau = timestep * torch.ones((batch_size, 1, 1, 1, 1), device=device, dtype=z_t.dtype)
             # PSD-trained models take the integration-step size as input; None means no delta.
-            # psd_enabled was a computed property on the old pydantic config; inlined here since a
-            # plain namespace only has the two underlying fields (see DiffusionTransformer.__init__).
-            psd_enabled = self.config.psd_loss_prob > 0 or self.config.psd_weight > 0
+            psd_enabled = self.config.psd_loss_prob > 0
             tau_delta = delta_t * torch.ones_like(tau) if psd_enabled else None
             # With noise_level=None, reuse the final step's forward to also produce
             # the kv cache instead of running a dedicated call after the loop.
@@ -333,20 +325,14 @@ class LatentWorldModel(nn.Module):
             )
 
         assert streaming_kv_caches is not None and last_kv_cache is not None
-        n_register_tokens = self.config.n_register_tokens
+        # Slide the cache by one frame: drop the oldest frame's keys/values, append the new frame's.
         for i in range(len(streaming_kv_caches)):
             if streaming_kv_caches[i] is not None:
                 k_ctx, v_ctx = streaming_kv_caches[i]
                 new_k, new_v = last_kv_cache[i]
                 streaming_kv_caches[i] = (
-                    torch.cat(
-                        [k_ctx[:, :n_register_tokens], k_ctx[:, n_register_tokens + 1 :], new_k],
-                        dim=1,
-                    ).clone(),
-                    torch.cat(
-                        [v_ctx[:, :n_register_tokens], v_ctx[:, n_register_tokens + 1 :], new_v],
-                        dim=1,
-                    ).clone(),
+                    torch.cat([k_ctx[:, 1:], new_k], dim=1).clone(),
+                    torch.cat([v_ctx[:, 1:], new_v], dim=1).clone(),
                 )
 
         return z_t, streaming_kv_caches
@@ -426,43 +412,6 @@ class LatentWorldModel(nn.Module):
             preprocessed_batch=batch,
             z_t=z_t,
         )
-
-    @torch.no_grad()
-    def visualize(self, outputs: InferenceOutputs) -> dict[str, Tensor]:
-        """Render a rollout with the keyboard action HUD for W&B logging (video-only).
-
-        Draws the action overlay on the predicted frames, marks the predicted (non-context) frames
-        with a coloured border, and stacks the prediction over the ground truth for a side-by-side
-        comparison clip.
-
-        Args:
-            outputs: The rollout to visualize (its ``output_video`` and ``preprocessed_batch``).
-
-        Returns:
-            ``{"viz_video": ..., "pred_video": ...}`` uint8 tensors of shape ``(B, T, C, H, W)``,
-            where ``viz_video`` stacks the HUD-annotated prediction over the ground truth vertically.
-        """
-        # Imported here (not at module load) to keep the model independent of the training package.
-        from mira.training.visualization import (  # noqa: PLC0415
-            add_prediction_border,
-            video_to_uint8,
-            visualize_batch,
-        )
-
-        pred_video = outputs.output_video
-        preprocessed_batch = outputs.preprocessed_batch
-
-        pred_video = visualize_batch(pred_video, preprocessed_batch.actions, self.actions_per_video_frame)
-        output_video_viz = add_prediction_border(pred_video, self.n_context_frames)
-
-        viz_video = torch.cat(
-            [
-                output_video_viz,  # Prediction first so it's visible if the clip is cropped vertically.
-                video_to_uint8(preprocessed_batch.video[:, : output_video_viz.shape[1]].to("cpu")),
-            ],
-            dim=-2,  # -2 = vertically, -1 = horizontally.
-        )
-        return {"viz_video": viz_video, "pred_video": pred_video}
 
     def normalize_tokens(self, z: Tensor) -> Tensor:
         return (z - self.latent_mean) / self.latent_std

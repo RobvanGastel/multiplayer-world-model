@@ -66,15 +66,6 @@ class SelfAttentionConfig(BaseModel):
     def head_dim(self) -> int:
         return self.embed_dim // self.num_heads
 
-    @property
-    def total_head_dim(self) -> int:
-        return (self.num_heads + 2 * self.num_kv_heads) * self.head_dim  # type: ignore
-
-    @property
-    def total_kv_dim(self) -> int:
-        return self.num_kv_heads * self.head_dim  # type: ignore
-
-
 class SelfAttention(nn.Module):
     def __init__(
         self,

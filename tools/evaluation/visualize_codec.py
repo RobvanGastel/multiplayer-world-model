@@ -2,7 +2,7 @@
 input-vs-reconstruction stills/GIFs, to see what the latents actually encode.
 
 Usage:
-    python -m tools.visualize_codec --checkpoint runs/codec.pt --out-dir runs/codec_preview
+    python -m tools.evaluation.visualize_codec --checkpoint runs/codec.pt --out-dir runs/codec_preview
 """
 from __future__ import annotations
 

@@ -21,13 +21,17 @@ class VideoActionBatch:
         than a plain Tensor since LatentWorldModel reads it via ActionTensors.slice_time.
     """
 
-    video: Tensor
+    video: Tensor | None
     actions: ActionTensors | None = None
+    # Pre-encoded raw codec latents (B, T_latent, C, h, w) in place of `video` -- see
+    # tools/data/encode_latents.py and LatentWorldModel.latents_from_batch.
+    latents: Tensor | None = None
 
     def to(self, device) -> "VideoActionBatch":
         return VideoActionBatch(
-            video=self.video.to(device),
+            video=self.video.to(device) if self.video is not None else None,
             actions=self.actions.to(device) if self.actions is not None else None,
+            latents=self.latents.to(device) if self.latents is not None else None,
         )
 
     def slice_time(self, start: int, end: int, fps: int | None = None) -> "VideoActionBatch":

@@ -2,15 +2,17 @@ import argparse
 import itertools
 import time
 from contextlib import nullcontext
+from functools import partial
 from pathlib import Path
 
 import torch
 import yaml
 
-from wm.data.dataset import create_loader
+from wm.data.dataset import create_latent_multiplayer_loader, create_loader, create_multiplayer_loader
 from wm.utils import load_config, merge_config
 from wm.training.lr_schedule import WarmupConstantCosineDecayLR
 from wm.world_model.latent_world_model import LatentWorldModel
+from wm.world_model.multi_wrapper_world_model import MultiWrapperWorldModel
 
 
 def cycle_loader(loader):
@@ -68,7 +70,10 @@ def _write_model_config_yaml(architecture_config_path: str, save_path: str) -> N
 def train_worldmodel(args):
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    model: LatentWorldModel = LatentWorldModel(args.architecture)
+    if hasattr(args.architecture, "n_players"):
+        model = MultiWrapperWorldModel(args.architecture)
+    else:
+        model = LatentWorldModel(args.architecture)
     model.train().to(device)
 
     _write_model_config_yaml(args.architecture_config, args.save_path)
@@ -88,9 +93,33 @@ def train_worldmodel(args):
     # best-model tracking, so runs/ only ever holds these two files instead of one per save_every.
     best_path = Path(args.save_path).with_stem(Path(args.save_path).stem + "_best")
     best_val_loss = float("inf")
+    start_iter = 0
+
+    # --resume continues a run exactly (weights + optimizer + schedule position), e.g. to chain
+    # Slurm jobs past the time limit. --init-from only takes the weights and starts this config's
+    # schedule from step 0 -- for continuing an older checkpoint saved without optimizer state
+    # (use a short warmup: the fresh AdamW moments make full-LR first steps unstable).
+    resume, init_from = getattr(args, "resume", None), getattr(args, "init_from", None)
+    if resume and Path(resume).exists():
+        checkpoint = torch.load(resume, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
+        start_iter = checkpoint["iter_num"] + 1
+        best_val_loss = checkpoint.get("best_val_loss", best_val_loss)
+        print(f"resumed {resume} at step {start_iter}, lr={lr_scheduler.get_last_lr()[0]:.2e}", flush=True)
+    elif init_from:
+        checkpoint = torch.load(init_from, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["state_dict"])
+        print(f"initialized weights from {init_from} (its step {checkpoint.get('iter_num')})", flush=True)
+
+    def training_state(iter_num: int) -> dict:
+        return {"iter_num": iter_num, "best_val_loss": best_val_loss,
+                "optimizer": optimizer.state_dict(), "lr_scheduler": lr_scheduler.state_dict()}
 
     losses: dict[str, torch.Tensor] = {}
-    for iter_num in range(args.steps):
+    iter_num = start_iter - 1
+    for iter_num in range(start_iter, args.steps):
         step_start_time = time.monotonic()
 
         batch = next(iter_train_loader).to(device)
@@ -117,17 +146,17 @@ def train_worldmodel(args):
                       flush=True)
 
         if args.save_every and (iter_num + 1) % args.save_every == 0:
-            model.save_checkpoint(args.save_path, extra_data={"iter_num": iter_num})
+            model.save_checkpoint(args.save_path, extra_data=training_state(iter_num))
 
-    model.save_checkpoint(args.save_path, extra_data={"iter_num": iter_num})
+    model.save_checkpoint(args.save_path, extra_data=training_state(iter_num))
     print("done training", flush=True)
 
 
-def _create_dataloaders(args, metrics, model: LatentWorldModel):
+def _create_dataloaders(args, metrics, model: LatentWorldModel | MultiWrapperWorldModel):
     """Build the (train, val, metrics) dataloaders. The val/metrics loaders use fixed seeds so the
     same held-out subsample is scored every eval. train_root/test_root are separate collected-data
     directories (see configs/world_model/train.yml) rather than a split within one directory --
-    generate held-out data with tools/data/collect_matches.py --out-dir <test_root>."""
+    generate held-out data with tools/agent/collect_matches.py --out-dir <test_root>."""
     # Apply the eval's context override before deriving the metrics clip length, so the loader, the
     # rollout, and the metric indexing all agree on n_context_frames (see set_inference_context).
     if metrics.n_context_frames is not None:
@@ -135,23 +164,36 @@ def _create_dataloaders(args, metrics, model: LatentWorldModel):
 
     common = dict(actions_config=model.config.actions, num_workers=args.num_workers)
     stride = metrics.eval_temporal_downsampling or model.temporal_downsampling
+    # MultiWrapperWorldModel needs paired p0/p1 batches (see wm/data/dataset.py's
+    # MultiPlayerActionClipDataset); its `n_players` attribute is the trainer's signal to switch.
+    loader_fn = create_multiplayer_loader if hasattr(model, "n_players") else create_loader
 
-    train_loader = create_loader(
+    # latents: true trains on <root>/latents from tools/data/encode_latents.py -- no codec pass and
+    # no video I/O per step. The metrics loader stays on video, as rollouts are compared in pixels.
+    if getattr(args, "latents", False):
+        train_fn = partial(create_latent_multiplayer_loader, n_latents=model.config.video.timesteps // model.temporal_downsampling)
+    else:
+        train_fn = partial(loader_fn, clip_len=model.config.video.timesteps)
+
+    train_loader = train_fn(
         root_dir=args.train_root,
-        clip_len=model.config.video.timesteps,
         batch_size=args.batch_size,
         seed=args.seed,
         **common,
     )
-    val_loader = create_loader(
+    # Pre-encoded latents are raw codec outputs, only meaningful for the codec that made them.
+    codec_used = getattr(train_loader.dataset, "codec_checkpoint", model.config.codec_checkpoint)
+    assert codec_used == model.config.codec_checkpoint, (
+        f"latents under {args.train_root} were encoded with {codec_used}, model uses {model.config.codec_checkpoint}")
+    val_loader = train_fn(
         root_dir=args.test_root,
-        clip_len=model.config.video.timesteps,
         batch_size=args.validation_batch_size or args.batch_size,
         seed=37,
         **common,
     )
-    metrics_loader = create_loader(
-        root_dir=args.test_root,
+    metrics_loader = loader_fn(
+        # video loaders take a single dir -- use the first when test_root lists several
+        root_dir=args.test_root[0] if isinstance(args.test_root, list) else args.test_root,
         clip_len=model.config.n_context_frames + metrics.num_unrolled_frames * stride,
         batch_size=metrics.per_device_batch_size,
         seed=38,
@@ -168,6 +210,12 @@ if __name__ == "__main__":
                          help="LatentWorldModelConfig -- see wm.world_model.latent_world_model.LatentWorldModel")
     parser.add_argument("--metrics-config", type=str, default="configs/world_model/metrics.yml",
                          help="eval-rollout config -- see configs/world_model/metrics.yml")
+    parser.add_argument("--resume", type=str, default=None,
+                         help="checkpoint saved by this trainer to continue exactly (skipped if missing)")
+    parser.add_argument("--init-from", type=str, default=None,
+                         help="checkpoint to take weights from; schedule/optimizer start fresh")
+    parser.add_argument("--save-path", dest="save_path", type=str, default=None,
+                         help="override the config's save_path")
     raw_args = parser.parse_args()
     args = merge_config(raw_args.config, raw_args)
 

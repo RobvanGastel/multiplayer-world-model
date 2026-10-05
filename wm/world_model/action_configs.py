@@ -32,24 +32,8 @@ class ActionConfig(BaseModel):
     """
 
     valid_keys: list[str]
-    # TODO: Might not be needed for me
     source_fps: int = 20  # the 4-player Rocket League recordings are ~20fps
     target_fps: int = 10
-
-    @property
-    def downsampling_factor(self) -> int:
-        """Integer ratio ``source_fps / target_fps`` used to downsample the action stream."""
-        if self.target_fps > self.source_fps:
-            raise ValueError(
-                f"Upsampling not supported: target_fps ({self.target_fps}) > source_fps ({self.source_fps})"
-            )
-        if self.source_fps % self.target_fps != 0:
-            raise ValueError(
-                f"Only integer downsampling is supported: source_fps ({self.source_fps}) must be a "
-                f"multiple of target_fps ({self.target_fps})."
-            )
-        return self.source_fps // self.target_fps
-
 
 class ActionTensors:
     """A tensor representation of the actions over time in a game, with a batch dimension.
@@ -86,46 +70,6 @@ class ActionTensors:
         sliced.mouse_movements = self.mouse_movements[:, start:end, :]
         sliced.game_mouse_sensitivity = self.game_mouse_sensitivity  # No time dimension
         return sliced
-
-    def slice_batch(self, start: int, end: int) -> ActionTensors:
-        """Slice along the batch dimension to ``[start, end)``."""
-        sliced = ActionTensors(config=self.config, batch_size=end - start)
-        sliced.key_presses = self.key_presses[start:end, :, :]
-        sliced.mouse_movements = self.mouse_movements[start:end, :, :]
-        sliced.game_mouse_sensitivity = self.game_mouse_sensitivity[start:end]
-        return sliced
-
-    def cat_time(self, other: ActionTensors) -> ActionTensors:
-        """Concatenate another ``ActionTensors`` along the time dimension.
-
-        Args:
-            other: Actions to append; must have the same ``batch_size`` and ``config``.
-
-        Returns:
-            A new ``ActionTensors`` with the time steps of both concatenated.
-        """
-        assert other.batch_size == self.batch_size, "Batch size must match"
-        assert other.config == self.config, f"Config must match: {other.config=} != {self.config=}"
-
-        result = ActionTensors(config=self.config, batch_size=self.batch_size)
-        result.key_presses = torch.cat([self.key_presses, other.key_presses], dim=1)
-        result.mouse_movements = torch.cat([self.mouse_movements, other.mouse_movements], dim=1)
-
-        # game_mouse_sensitivity has no time dimension. If one side is all-NaN we take the other;
-        # otherwise the two must agree.
-        if torch.isnan(other.game_mouse_sensitivity).all():
-            result.game_mouse_sensitivity = self.game_mouse_sensitivity.clone()
-        elif torch.isnan(self.game_mouse_sensitivity).all():
-            result.game_mouse_sensitivity = other.game_mouse_sensitivity.clone()
-        else:
-            if not torch.allclose(self.game_mouse_sensitivity, other.game_mouse_sensitivity, equal_nan=True):
-                raise ValueError(
-                    "Mouse sensitivities do not match: "
-                    f"{self.game_mouse_sensitivity} vs {other.game_mouse_sensitivity}"
-                )
-            result.game_mouse_sensitivity = self.game_mouse_sensitivity.clone()
-
-        return result
 
     def to(self, *args, **kwargs) -> ActionTensors:
         """Propagate ``torch.Tensor.to`` to every held tensor."""

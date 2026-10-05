@@ -31,15 +31,14 @@ class FeedForward(nn.Module):
 
 
 class AdaSTBlock(nn.Module):
-    """Spatial attention + optional temporal attention + feed-forward, with AdaLN conditioning.
+    """Spatial attention + optional temporal attention + feed-forward, each conditioned through an
+    adaptive LayerNorm (as in DiT).
 
     Args:
         config: Self-attention configuration shared by the spatial and temporal attention.
         cond_dim: Dimension of the conditioning tensor fed to the adaptive LayerNorms.
         causal: Whether the temporal attention is causal.
         time_attention: Whether this block has a temporal-attention sublayer.
-        ada_attn_ln: If True, apply AdaLN conditioning to the attention sublayers (space/time) as
-            well as the MLP, as in standard DiT; otherwise the attention LayerNorms are plain.
     """
 
     def __init__(
@@ -48,24 +47,16 @@ class AdaSTBlock(nn.Module):
         cond_dim: int,
         causal: bool,
         time_attention: bool = True,
-        ada_attn_ln: bool = False,
     ):
         super().__init__()
         self.time_attention = time_attention
-        self.ada_attn_ln = ada_attn_ln
 
-        self.space_attn_ln = (
-            AdaptiveLayerNorm(config.embed_dim, cond_dim) if ada_attn_ln else nn.LayerNorm(config.embed_dim)
-        )
+        self.space_attn_ln = AdaptiveLayerNorm(config.embed_dim, cond_dim)
         self.space_attn = SelfAttention(config, causal=False)
 
         self.time_attn_ln, self.time_attn = None, None
         if self.time_attention:
-            self.time_attn_ln = (
-                AdaptiveLayerNorm(config.embed_dim, cond_dim)
-                if ada_attn_ln
-                else nn.LayerNorm(config.embed_dim)
-            )
+            self.time_attn_ln = AdaptiveLayerNorm(config.embed_dim, cond_dim)
             self.time_attn = SelfAttention(config, causal=causal)
 
         self.mlp_ln = AdaptiveLayerNorm(config.embed_dim, cond_dim)
@@ -82,21 +73,15 @@ class AdaSTBlock(nn.Module):
     ) -> tuple[Tensor, tuple[Tensor, Tensor] | None]:
         b, t, h, w, _ = x.shape
         x = rearrange(x, "b t h w c -> (b t) (h w) c")
-        if self.ada_attn_ln:
-            cond_space = rearrange(cond, "b t h w c -> (b t) (h w) c")
-            x = x + self.space_attn(self.space_attn_ln(x, cond_space), rotary_emb=spatial_rotary_emb)
-        else:
-            x = x + self.space_attn(self.space_attn_ln(x), rotary_emb=spatial_rotary_emb)
+        cond_space = rearrange(cond, "b t h w c -> (b t) (h w) c")
+        x = x + self.space_attn(self.space_attn_ln(x, cond_space), rotary_emb=spatial_rotary_emb)
 
         to_cache = None
         if self.time_attn is not None:
             assert self.time_attn_ln is not None
             x = rearrange(x, "(b t) (h w) c -> (b h w) t c", b=b, t=t, h=h, w=w)
-            if self.ada_attn_ln:
-                cond_time = rearrange(cond, "b t h w c -> (b h w) t c")
-                x_normed = self.time_attn_ln(x, cond_time)
-            else:
-                x_normed = self.time_attn_ln(x)
+            cond_time = rearrange(cond, "b t h w c -> (b h w) t c")
+            x_normed = self.time_attn_ln(x, cond_time)
             y_out = self.time_attn(
                 x_normed,
                 rotary_emb=temporal_rotary_emb,

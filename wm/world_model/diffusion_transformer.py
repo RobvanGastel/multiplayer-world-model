@@ -41,13 +41,6 @@ class DiffusionTransformer(nn.Module):
         )
         hidden_dim = config.hidden_dim
 
-        self.register_tokens = None
-        self.n_register_tokens = config.n_register_tokens
-        if self.n_register_tokens > 0:
-            self.register_tokens = nn.Parameter(
-                0.02 * torch.randn(1, self.n_register_tokens, 1, 1, hidden_dim)
-            )
-
         self.latent_tokens_proj = nn.Linear(latent_dim * self.patch_size**2, hidden_dim)
         # Only created when past-conditioning is enabled so that checkpoints trained
         # without it still load with a strict state dict.
@@ -70,9 +63,7 @@ class DiffusionTransformer(nn.Module):
         # when PSD is enabled so that checkpoints trained without it still load with a strict
         # state dict.
         self.diffusion_time_embedding_delta = None
-        # psd_enabled was a computed property on the old pydantic config; inlined here since a
-        # plain namespace only has the two underlying fields.
-        if config.psd_loss_prob > 0 or config.psd_weight > 0:
+        if config.psd_loss_prob > 0:
             self.diffusion_time_embedding_delta = DiffusionTimeEmbedding(dim=hidden_dim)
 
         def has_time_attention(i: int, n_layers: int):
@@ -90,7 +81,6 @@ class DiffusionTransformer(nn.Module):
                     cond_dim=hidden_dim,
                     causal=config.causal,
                     time_attention=has_time_attention(i, config.n_layers),
-                    ada_attn_ln=config.ada_attn_ln,
                 )
                 for i in range(config.n_layers)
             ]
@@ -151,13 +141,6 @@ class DiffusionTransformer(nn.Module):
         sequence = z_t  # (b t h w c)
         cond = a + tau_emb  # (b t h w c)
 
-        if (self.register_tokens is not None) and (kv_caches is None):
-            register_tokens = self.register_tokens.repeat(b, 1, h, w, 1)
-            sequence = torch.cat([register_tokens, sequence], dim=1)
-
-            cond_register_tokens = torch.zeros_like(register_tokens)
-            cond = torch.cat([cond_register_tokens, cond], dim=1)
-
         rope_len = sequence.shape[1]
         if kv_caches is not None:
             rope_len += kv_caches[0][0].shape[1]
@@ -189,9 +172,6 @@ class DiffusionTransformer(nn.Module):
                 )
                 if return_kv:
                     new_kv_caches.append(to_cache)
-
-        if (self.register_tokens is not None) and (kv_caches is None):
-            sequence = sequence[:, self.n_register_tokens :]
 
         pred_v = self.head(sequence)
 

@@ -12,6 +12,8 @@ PUCK_DRAW_FRAC = 1.0
 MALLET_DRAW_FRAC = 1.0
 PUCK_HEIGHT_FRAC = 0.25
 MALLET_HEIGHT_FRAC = 0.3
+# Canvas background; tools/agent/collect_matches.py pads frames with the same colour.
+BACKGROUND_COLOR = (16, 18, 26)
 
 class _Cam:
     def __init__(self, cfg, agent_idx, W, Hpx, tilt_deg=35.0):
@@ -139,7 +141,7 @@ def render_iso_pil(oracle: ArenaOracle, agent_idx: int = 0, out_px: int | None =
     out_px = out_px or cfg.frame_size
     W = H = out_px * ss
     cam = _Cam(cfg, agent_idx, W, H, tilt_deg=tilt_deg)
-    im = Image.new("RGB", (W, H), (16, 18, 26))
+    im = Image.new("RGB", (W, H), BACKGROUND_COLOR)
     d = ImageDraw.Draw(im, "RGBA")
 
     gy0, gy1 = oracle.goal["y0"], oracle.goal["y1"]

@@ -136,7 +136,8 @@ class AirHockeyMatchEnv(gym.Env):
     def step(self, action):
         ax = float(np.clip(action[0], -1.0, 1.0))
         ay = float(np.clip(action[1], -1.0, 1.0))
-        actions = [(ax, ay)] + ([self._defend()] if self._defend is not None else [])
+        defend_action = self._defend() if self._defend is not None else None
+        actions = [(ax, ay)] + ([defend_action] if defend_action is not None else [])
         state, _ = self.oracle.step(actions)
 
         outcome = self.oracle.outcome
@@ -152,7 +153,16 @@ class AirHockeyMatchEnv(gym.Env):
         reward = {"goal": 1.0, "conceded": -1.0, "timeout": -1.0}.get(outcome, 0.0)
         terminated = outcome in ("goal", "conceded")
         truncated = outcome == "timeout"
-        return self._obs(), reward, terminated, truncated, {"outcome": outcome, "state": state}
+        # defend_action is in world/oracle frame (mallet-1's raw coordinates, as fed to
+        # oracle.step). Mirror the x-axis to match p1's own rendered viewpoint instead
+        # (render_iso's agent_idx=1 camera flip, same convention agent_observation's
+        # mirror=True uses for p1's observations) -- so a recorded action reads with the
+        # same left/right sense as p0's does relative to p0's own frame, regardless of
+        # whether _defend is the network or scripted path (both return world-frame here).
+        defender_action = (-defend_action[0], defend_action[1]) if defend_action is not None else None
+        return self._obs(), reward, terminated, truncated, {
+            "outcome": outcome, "state": state, "defender_action": defender_action,
+        }
 
     def render(self):
         if self.render_mode == "rgb_array":
@@ -189,7 +199,7 @@ class MatchDataRecorder(gym.Wrapper):
         super().__init__(env)
         assert view in ("flat", "iso")
         self.view = view
-        self._p0, self._p1, self._states, self._actions = [], [], [], []
+        self._p0, self._p1, self._states, self._actions, self._actions_p1 = [], [], [], [], []
 
     def _frame(self, oracle, agent_idx: int):
         if self.view == "flat":
@@ -207,6 +217,7 @@ class MatchDataRecorder(gym.Wrapper):
         self._p1 = [self._frame(oracle, 1)]
         self._states = [info["state"]]
         self._actions = []
+        self._actions_p1 = []
         return obs, info
 
     def step(self, action):
@@ -216,6 +227,14 @@ class MatchDataRecorder(gym.Wrapper):
         self._p1.append(self._frame(oracle, 1))
         self._states.append(info["state"])
         self._actions.append(np.asarray(action, dtype=np.float32))
+        # defender_action is None only when n_mallets != 2 (see AirHockeyMatchEnv.step) --
+        # not a real case for MatchDataRecorder's own 2-mallet usage, but padded with a
+        # no-op rather than crashing so this stays usable standalone.
+        defender_action = info.get("defender_action")
+        self._actions_p1.append(
+            np.asarray(defender_action if defender_action is not None else (0.0, 0.0),
+                       dtype=np.float32)
+        )
         return obs, reward, terminated, truncated, info
 
     def episode_data(self) -> dict:
@@ -226,6 +245,7 @@ class MatchDataRecorder(gym.Wrapper):
             "frames_p1": np.stack(self._p1).astype(np.uint8),
             "states": self._states,
             "actions": np.array(self._actions, dtype=np.float32),
+            "actions_p1": np.array(self._actions_p1, dtype=np.float32),
             "field": list(self.env.unwrapped.oracle.field),
             "outcome": self.env.unwrapped.oracle.outcome,
         }
