@@ -17,7 +17,7 @@ bottleneck:
   noise_tau: 0.0
 
 vit_width: 384
-vit_depth: 6
+vit_depth: 10
 vit_num_heads: 12
 vit_num_kv_heads: null
 mlp_dim_multiplier: 4
@@ -25,6 +25,6 @@ layerscale_init: 1.0e-4
 rope_theta_spatial: 100.0
 rope_theta_temporal: 64.0
 # Literal["rmsnorm", "layernorm"] in the original model; not enforced here,
-# wm.codec.layers.attention.SelfAttentionConfig is whatever actually
+# wm.training.attention.SelfAttentionConfig is whatever actually
 # validates it now.
 qk_norm: layernorm

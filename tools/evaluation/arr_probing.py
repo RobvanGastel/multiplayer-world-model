@@ -15,7 +15,7 @@ and the codec's visual domain.
 
 Usage:
     python -m tools.evaluation.arr_probing train-probe --out runs/arr_probe/probe.pt
-    python -m tools.evaluation.arr_probing eval --probe runs/arr_probe/probe.pt --checkpoint runs/wm/world_model.pt
+    python -m tools.evaluation.arr_probing eval --probe runs/arr_probe/probe.pt --checkpoint runs/world_model.pt
 """
 from __future__ import annotations
 

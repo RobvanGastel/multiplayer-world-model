@@ -16,9 +16,8 @@ aggregation_layers: [2, 5, 8, 11]
 bottleneck:
   stride: 2
   temporal_stride: 2
-  noise_tau: 0.0
 
 
 compile_dino: false
 # Directory holding pretrained DINOv3 .pth weight files 
-dino_weights_dir: output
+dino_weights_dir: weights/

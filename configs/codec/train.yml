@@ -5,12 +5,12 @@ compile: false
 
 data_root: data/train
 clip_len: 16
-batch_size: 48
+batch_size: 96
 num_workers: 6
 
 # linearly scaled with batch_size (Goyal et al.) from the original 1e-4
 # tuned for batch_size: 4 -- 12x batch -> 12x lr.
-lr: 1.2e-3
+lr: 2.4e-3
 weight_decay: 0.1
 adam_beta1: 0.9
 adam_beta2: 0.95
@@ -27,7 +27,7 @@ latents_ema_decay: 0.99
 
 log_every: 50
 save_every: 1000
-save_path: output/codec.pt
+save_path: runs/codec.pt
 
 # path to a codec checkpoint to resume model weights + latent mean/std
 resume: null
@@ -36,4 +36,4 @@ resume: null
 vis_every: 50
 vis_num_clips: 4
 vis_upscale: 3
-vis_dir: output/codec
+vis_dir: runs/codec

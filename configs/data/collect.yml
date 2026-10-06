@@ -1,0 +1,36 @@
+# tools/agent/collect_matches.py defaults. Command-line flags override any key here.
+#
+# The world model in runs/wm/ was trained on two collections made with this recipe:
+#   train : --random-frac 0.3 --seed 42 --out-dir .../train
+# Give every collection its own --seed, so no two of them replay the same games.
+
+# PPO agents to play with (glob patterns or paths), alternated every `switch_every` matches.
+checkpoints_glob: ["runs/ppo_*/*_best.pt"]
+switch_every: 10
+seed: 0
+
+# Matches per run, and where they start
+num_matches: 1500
+start_idx: 0
+shard: 0
+
+# Match format: first to `win_games` goals, at most `best_of` games.
+best_of: 5
+win_games: 3
+
+# Actions. Execute every action as the W/A/S/D keys it is recorded as, so the recorded keys
+# describe the real control exactly. Without it, the agents' continuous thrust is only rounded to
+# keys when recorded, and 41% of the per-axis labels misstate what was played.
+wasd_actions: true
+# Average fraction of steps each player spends holding a random key combination (0 = pure agent
+# play), for random_hold_min..random_hold_max frames at a time.
+random_frac: 0.0
+random_hold_min: 6
+random_hold_max: 30
+
+# Rendering. frame_size is the board's width and height before the header bar; pad_height pads the
+# frame (board + header) to a height the codec can encode, a multiple of its 32x downsampling.
+frame_size: 128
+pad_height: 160
+# How long each game's final frame (score + outcome banner) is held before the next game starts.
+hold_secs: 1.0

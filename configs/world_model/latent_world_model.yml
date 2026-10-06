@@ -1,53 +1,55 @@
-# Latent World Model config ported from the original pydantic setup
-actions:
-  valid_keys: [w, a, s, d]
-  source_fps: 60
-  target_fps: 30
+# MultiWrapperWorldModel config
+n_players: 2
 
-video:
-  height: 160
-  width: 128
-  channels: 3
-  timesteps: 40
-  fps: 60
+wm_config:
+  actions:
+    valid_keys: [w, a, s, d]
+    source_fps: 60
+    # Must equal the rate of the action stream the loaders deliver: nothing resamples actions (the
+    # dataset hands over one action per recorded 60fps frame). target_fps 30 made
+    # action_temporal_downsampling 1 instead of 2, so each latent (2 frames) read one action from
+    # ~half its own time index -- stale, uninformative actions the model learned to ignore.
+    # 60 gives 2 actions per latent, latent j <- actions 2j-1, 2j (the transitions into its frames).
+    target_fps: 60
 
-codec_checkpoint: runs/codec.pt
-# Optional override of the codec latent mean/std; normally read from the codec checkpoint.
-latent_mean_std: null
+  video:
+    height: 160
+    width: 128
+    channels: 3
+    timesteps: 40
+    fps: 60
 
-causal: true
-activation_checkpointing: true
+  # The codec2 snapshot (~step 67k) that the world model was trained with. Its latent mean/std are
+  # stored in the codec checkpoint, so the world model only works with this exact codec.
+  codec_checkpoint: runs/codec.pt
+  # Optional override of the codec latent mean/std; normally read from the codec checkpoint.
+  latent_mean_std: null
 
-# PSD-M self-distillation: progressive self-distillation with midpoint targets; see "How to build a
-# consistency model" (https://arxiv.org/abs/2505.18825) and the equivalent scheme in "One Step
-# Diffusion via Shortcut Models" (https://arxiv.org/abs/2410.12557).
-psd_loss_prob: 0.1
-psd_weight: 0.0
+  causal: true
+  activation_checkpointing: true
 
-# Condition each denoising step on the clean latents of the previous frames (avoids the
-# train/inference mismatch in diffusion forcing).
-use_clean_past: true
+  # PSD-M self-distillation: progressive self-distillation with midpoint targets; see "How to build a
+  # consistency model" (https://arxiv.org/abs/2505.18825) and the equivalent scheme in "One Step
+  # Diffusion via Shortcut Models" (https://arxiv.org/abs/2410.12557).
+  # Fraction of training steps that add the PSD-M loss (0 disables it).
+  psd_loss_prob: 0.1
 
-dropout_action_prob: 0.1
-dropout_action_per_player: false
-action_subset_drop_prob: 0.5
-learned_temporal_pool: true
-use_codec_posterior_mean: true
+  # Condition each denoising step on the clean latents of the previous frames (avoids the
+  # train/inference mismatch in diffusion forcing).
+  use_clean_past: true
 
-n_register_tokens: 0
+  # Per-player action dropout: a dropped player's keys are replaced by learned "unknown" tokens.
+  dropout_action_prob: 0.1
 
-patch_size: 1
-attention_gating: true
-# If true, apply AdaLN conditioning to the attention sublayers (space/time) as well as the MLP, as
-# in standard DiT. The default applies MLP-only conditioning and keeps the extra parameters out of
-# the state dict for strict loading.
-ada_attn_ln: true
+  patch_size: 1
+  attention_gating: true
 
-n_context_frames: 39  # only used during inference
+  n_context_frames: 39  # only used during inference
 
-# Original model was 1B: hidden_dim=2048, n_head=16, n_layers=16, ~1.64B params
-hidden_dim: 384
-n_head: 12
-n_kv_head: null
-n_layers: 7
-time_attention_every: 1
+  # Same small transformer as configs/world_model/latent_world_model.yml -- hidden_dim/n_head/
+  # n_layers are unaffected by tiling (only video.height is multiplied by n_players internally).
+  hidden_dim: 384
+  n_head: 8
+  n_kv_head: null
+  n_layers: 10
+  time_attention_every: 1

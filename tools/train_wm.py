@@ -95,8 +95,6 @@ def train_worldmodel(args):
     best_val_loss = float("inf")
     start_iter = 0
 
-    # --resume continues a run exactly (weights + optimizer + schedule position), e.g. to chain
-    # Slurm jobs past the time limit. --init-from only takes the weights and starts this config's
     # schedule from step 0 -- for continuing an older checkpoint saved without optimizer state
     # (use a short warmup: the fresh AdamW moments make full-LR first steps unstable).
     resume, init_from = getattr(args, "resume", None), getattr(args, "init_from", None)
