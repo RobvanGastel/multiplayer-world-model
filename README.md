@@ -31,6 +31,8 @@ pip install -e .
 
 The codec uses the pretrained DINOv3 ViT-S/16 weights. Download them from the [DINOv3 repository](https://github.com/facebookresearch/dinov3) and set `dino_weights_dir` in `configs/codec/rae_encoder.yml` to the folder containing them.
 
+The trained weights of the world model, the codec and the PPO agents are available on [Google Drive](https://drive.google.com/file/d/1PrdT9oku5WzJjU6V3eDjJ8esI31oaOBm/view?usp=sharing). Place them in `runs/`.
+
 ## Usage
 The pipeline has four stages. Each stage is one command, and the output of each stage is the input of the next.
 
